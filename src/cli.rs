@@ -11,12 +11,16 @@ pub struct Cli {
     #[clap(value_parser = validate_directory)]
     pub destination: PathBuf,
 
+    #[clap(value_parser, short = 'm', long = "move", action, name = "move")]
+    /// Don't perform any write operation
+    pub do_move: bool,
+
     #[clap(value_parser, short, long, action)]
     /// Don't perform any write operation
     pub dry_run: bool,
 
     #[clap(value_parser, short, long, action)]
-    /// Overwrite TARGET, if it exists
+    /// Overwrite target files at DESTINATION, if it exists
     pub overwrite: bool,
 }
 

@@ -21,6 +21,7 @@ fn main() -> anyhow::Result<()> {
         &args.destination,
         args.dry_run,
         args.overwrite,
+        args.do_move,
     )?;
     runner.run()
 }
@@ -32,6 +33,7 @@ struct Runner<'a> {
     destination: &'a Path,
     dry_run: bool,
     overwrite: bool,
+    do_move: bool,
 }
 
 impl<'a> Runner<'a> {
@@ -41,6 +43,7 @@ impl<'a> Runner<'a> {
         destination: &'a Path,
         dry_run: bool,
         overwrite: bool,
+        do_move: bool,
     ) -> anyhow::Result<Self> {
         let input_files = fs::scan(source)?;
         let filter = BloomFilter::with_rate(0.01, input_files.len() as u32);
@@ -51,6 +54,7 @@ impl<'a> Runner<'a> {
             destination,
             dry_run,
             overwrite,
+            do_move,
         })
     }
     fn run(&mut self) -> anyhow::Result<()> {
@@ -66,39 +70,50 @@ impl<'a> Runner<'a> {
                     .or_default()
                     .insert(file_name);
             } else {
-                self.move_file(file_name, &new_file_name)?;
+                self.handle_file(file_name, &new_file_name)?;
                 self.filter.insert(&new_file_name);
             }
         }
-        self.move_duplicates(duplicates)
+        self.handle_duplicates(duplicates)
     }
 
-    fn move_file(&self, old: &Path, new: &Path) -> anyhow::Result<()> {
+    fn handle_file(&self, old: &Path, new: &Path) -> anyhow::Result<()> {
         if self.dry_run {
             println!("{} -> {}", old.display(), new.display());
             return Ok(());
         }
-        if self.overwrite {
-            cmd!(self.sh, "mv {old} {new}")
-        } else {
-            cmd!(self.sh, "mv -n {old} {new}")
-        }
-        .run()
-        .context("Failed to move file")
+        let command = match (self.do_move, self.overwrite) {
+            // Move, overwrite
+            (true, true) => cmd!(self.sh, "mv {old} {new}"),
+
+            // Move, preserve
+            (true, false) => cmd!(self.sh, "mv -n {old} {new}"),
+
+            // Copy, overwrite
+            (false, true) => cmd!(self.sh, "cp {old} {new}"),
+
+            // Copy, preserve
+            (false, false) => cmd!(self.sh, "cp -n {old} {new}"),
+        };
+
+        command.run().context("Failed to handle file")
     }
 
-    fn move_duplicates(&self, duplicates: HashMap<PathBuf, HashSet<&Path>>) -> anyhow::Result<()> {
+    fn handle_duplicates(
+        &self,
+        duplicates: HashMap<PathBuf, HashSet<&Path>>,
+    ) -> anyhow::Result<()> {
         for (new_file_name, old_file_names) in duplicates.into_iter() {
             if old_file_names.len() == 1 {
                 // Handle false positives
                 let old_file_name = old_file_names.into_iter().next().unwrap();
-                self.move_file(old_file_name, &new_file_name)?;
+                self.handle_file(old_file_name, &new_file_name)?;
                 return Ok(());
             } else {
                 let mut counter: u32 = 1;
                 for old_file_name in old_file_names {
                     let new_file_name_with_suffix = increment_name(&new_file_name, counter);
-                    self.move_file(&new_file_name_with_suffix, old_file_name)?;
+                    self.handle_file(&new_file_name_with_suffix, old_file_name)?;
                     counter += 1
                 }
             }
