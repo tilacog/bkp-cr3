@@ -22,8 +22,7 @@ fn main() -> anyhow::Result<()> {
         args.dry_run,
         args.overwrite,
     )?;
-    runner.run();
-    Ok(())
+    runner.run()
 }
 
 struct Runner<'a> {
