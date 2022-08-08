@@ -60,45 +60,69 @@ impl<'a> Runner<'a> {
             let metadata = Metadata::exiftool(&self.sh, &file_name)?;
             let new_file_name = metadata.new_file_name(self.destination);
             if self.filter.contains(&new_file_name) {
-                Self::register_duplicate(&mut duplicates, &file_name, new_file_name);
+                // register duplicate
+                duplicates
+                    .entry(new_file_name)
+                    .or_default()
+                    .insert(file_name);
             } else {
-                self.move_file(&self.sh, file_name, &new_file_name)?;
+                self.move_file(file_name, &new_file_name)?;
                 self.filter.insert(&new_file_name);
             }
         }
-        self.move_duplicates(&self.sh, duplicates)
+        self.move_duplicates(duplicates)
     }
 
-    fn move_file(&self, sh: &Shell, old: &PathBuf, new: &PathBuf) -> anyhow::Result<()> {
+    fn move_file(&self, old: &Path, new: &Path) -> anyhow::Result<()> {
         if self.dry_run {
             println!("{} -> {}", old.display(), new.display());
             return Ok(());
         }
         if self.overwrite {
-            cmd!(sh, "mv {old} {new}")
+            cmd!(self.sh, "mv {old} {new}")
         } else {
-            cmd!(sh, "mv -n {old} {new}")
+            cmd!(self.sh, "mv -n {old} {new}")
         }
         .run()
         .context("Failed to move file")
     }
 
-    fn move_duplicates(
-        &self,
-        sh: &Shell,
-        duplicates: HashMap<PathBuf, HashSet<&Path>>,
-    ) -> anyhow::Result<()> {
-        todo!()
+    fn move_duplicates(&self, duplicates: HashMap<PathBuf, HashSet<&Path>>) -> anyhow::Result<()> {
+        for (new_file_name, old_file_names) in duplicates.into_iter() {
+            if old_file_names.len() == 1 {
+                // Handle false positives
+                let old_file_name = old_file_names.into_iter().next().unwrap();
+                self.move_file(old_file_name, &new_file_name)?;
+                return Ok(());
+            } else {
+                let mut counter: u32 = 1;
+                for old_file_name in old_file_names {
+                    let new_file_name_with_suffix = increment_name(&new_file_name, counter);
+                    self.move_file(&new_file_name_with_suffix, old_file_name)?;
+                    counter += 1
+                }
+            }
+        }
+        Ok(())
     }
+}
 
-    fn register_duplicate<'b>(
-        duplicates: &mut HashMap<PathBuf, HashSet<&'b Path>>,
-        file_name: &'b Path,
-        new_file_name: PathBuf,
-    ) {
-        duplicates
-            .entry(new_file_name)
-            .or_default()
-            .insert(file_name);
+fn increment_name(input: &Path, number: u32) -> PathBuf {
+    let extension = input.extension().expect("Expected an extension");
+    let base_name = input.with_extension("");
+    let base_name = base_name.to_str().expect("Expected a base name");
+    let new_name = format!("{}-{:0>3}", base_name, number);
+    input.with_file_name(&new_name).with_extension(extension)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_increment_name() {
+        let path = Path::new("/etc/foo/bar.rs");
+        let new = increment_name(path, 1);
+        assert_eq!(new, Path::new("/etc/foo/bar-001.rs"))
     }
 }
