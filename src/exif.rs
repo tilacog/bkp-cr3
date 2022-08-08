@@ -43,7 +43,7 @@ impl Metadata {
             .collect()
     }
 
-    pub fn file_name(&self, destination: &Path) -> PathBuf {
+    pub fn new_file_name(&self, destination: &Path) -> PathBuf {
         assert!(destination.is_dir(), "Expected a directory for destination");
         assert!(
             destination.is_absolute(),

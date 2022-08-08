@@ -14,7 +14,7 @@ fn main() -> anyhow::Result<()> {
         println!(
             "{}\t->\t{}",
             f.display(),
-            metadata.file_name(&args.destination).display()
+            metadata.new_file_name(&args.destination).display()
         );
     }
     Ok(())
