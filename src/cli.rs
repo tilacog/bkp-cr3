@@ -20,13 +20,13 @@ pub struct Cli {
     pub overwrite: bool,
 }
 
-fn validate_directory(s: &str) -> Result<PathBuf, String> {
+fn validate_directory(s: &str) -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(s);
     if !path.exists() {
-        Err(format!("Directory does not exist: {path:?}"))
+        anyhow::bail!("Directory does not exist: {path:?}")
     } else if !path.is_dir() {
-        Err(format!("Path is not a directory: {path:?}"))
+        anyhow::bail!("Path is not a directory: {path:?}")
     } else {
-        Ok(path)
+        Ok(path.canonicalize()?)
     }
 }
