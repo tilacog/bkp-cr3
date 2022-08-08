@@ -2,15 +2,15 @@ mod cli;
 mod exif;
 mod fs;
 
+use crate::exif::Metadata;
+use anyhow::Context as _;
 use bloom::{BloomFilter, ASMS};
 use clap::Parser as _;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
-use xshell::Shell;
-
-use crate::exif::Metadata;
+use xshell::{cmd, Shell};
 
 fn main() -> anyhow::Result<()> {
     let args = cli::Cli::parse();
@@ -63,15 +63,25 @@ impl<'a> Runner<'a> {
             if self.filter.contains(&new_file_name) {
                 Self::register_duplicate(&mut duplicates, &file_name, new_file_name);
             } else {
-                self.move_file(&self.sh, &new_file_name)?;
+                self.move_file(&self.sh, file_name, &new_file_name)?;
                 self.filter.insert(&new_file_name);
             }
         }
         self.move_duplicates(&self.sh, duplicates)
     }
 
-    fn move_file(&self, sh: &Shell, new_file: &PathBuf) -> anyhow::Result<()> {
-        todo!()
+    fn move_file(&self, sh: &Shell, old: &PathBuf, new: &PathBuf) -> anyhow::Result<()> {
+        if self.dry_run {
+            println!("{} -> {}", old.display(), new.display());
+            return Ok(());
+        }
+        if self.overwrite {
+            cmd!(sh, "mv {old} {new}")
+        } else {
+            cmd!(sh, "mv -n {old} {new}")
+        }
+        .run()
+        .context("Failed to move file")
     }
 
     fn move_duplicates(
