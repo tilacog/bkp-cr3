@@ -27,7 +27,7 @@ impl Metadata {
             .ok_or_else(|| anyhow::anyhow!("Failed to parse date"))?;
         let artist = iter
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse artist"))?;
+            .unwrap_or_else(|| String::from("Unknown Artist"));
         let metadata = Metadata {
             artist,
             date: NaiveDateTime::parse_from_str(&date, INPUT_DATE_FMT)?,
