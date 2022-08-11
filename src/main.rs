@@ -3,16 +3,12 @@ mod exif;
 mod fs;
 
 use crate::exif::Metadata;
-use bloom::{BloomFilter, ASMS};
 use clap::Parser as _;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
 use xshell::Shell;
-
-type Duplicates<'a> = HashMap<PathBuf, HashSet<&'a Path>>;
-type Uniques<'a> = HashMap<PathBuf, &'a Path>;
 
 fn main() -> anyhow::Result<()> {
     let args = cli::Cli::parse();
@@ -58,30 +54,25 @@ impl<'a> Runner<'a> {
     }
 
     fn run(&mut self) -> anyhow::Result<()> {
-        let mut filter = BloomFilter::with_rate(0.01, self.input_files.len() as u32);
-        let mut duplicates: Duplicates = HashMap::new();
-        let mut uniques: Uniques = HashMap::new();
+        let mut files: HashMap<&Path, HashSet<PathBuf>> = HashMap::new();
 
-        for source_file_name in self.input_files.iter() {
-            let metadata = Metadata::exiftool(&self.sh, &source_file_name)?;
-            let dest_file_name = metadata.new_file_name(self.destination);
-
-            if filter.contains(&dest_file_name) {
-                // If the filter has seen this name before, then this is probably a duplicate.
-                // We need to:
-                // 1. remove the previous ocurrence from the `uniques` container, if it is there.
-                // 2. if the previous operation succeeded, insert the current file name in the
-                //   `duplicates` container.
-                if let Some(prev_source_file_name) = uniques.remove(&dest_file_name) {
-                    insert_duplicate(&mut duplicates, dest_file_name.clone(), source_file_name);
-                    insert_duplicate(&mut duplicates, dest_file_name, prev_source_file_name);
-                    continue;
-                }
-            }
-            insert_unique(&mut filter, &mut uniques, dest_file_name, &source_file_name);
+        // parse metadata and group
+        for source in self.input_files.iter() {
+            let metadata = Metadata::exiftool(&self.sh, &source)?;
+            let dest = metadata.new_file_name(self.destination);
+            files.entry(source).or_default().insert(dest);
         }
-        self.handle_uniques(uniques)?;
-        self.handle_duplicates(duplicates)
+
+        // fan out
+        for (destination, sources) in files.into_iter() {
+            if sources.len() == 1 {
+                let source = sources.into_iter().next().unwrap();
+                self.handle_file(&source, destination)?;
+            } else {
+                self.handle_duplicates(destination, sources)?
+            }
+        }
+        Ok(())
     }
 
     fn handle_file(&self, source: &Path, destination: &Path) -> anyhow::Result<()> {
@@ -93,48 +84,19 @@ impl<'a> Runner<'a> {
         }
     }
 
-    fn handle_uniques(&self, uniques: HashMap<PathBuf, &Path>) -> anyhow::Result<()> {
-        for (dest_file_name, source_file_name) in uniques.into_iter() {
-            self.handle_file(source_file_name, &dest_file_name)?;
-        }
-        Ok(())
-    }
-
     fn handle_duplicates(
         &self,
-        duplicates: HashMap<PathBuf, HashSet<&Path>>,
+        destination_prefix: &Path,
+        sources: HashSet<PathBuf>,
     ) -> anyhow::Result<()> {
-        for (new_file_name, old_file_names) in duplicates.into_iter() {
-            if old_file_names.len() == 1 {
-                // Handle false positives
-                let old_file_name = old_file_names.into_iter().next().unwrap();
-                self.handle_file(old_file_name, &new_file_name)?;
-                return Ok(());
-            } else {
-                let mut counter: u32 = 1;
-                for old_file_name in old_file_names {
-                    let new_file_name_with_suffix = increment_name(&new_file_name, counter);
-                    self.handle_file(old_file_name, &new_file_name_with_suffix)?;
-                    counter += 1
-                }
-            }
+        let mut counter: u32 = 1;
+        for old in sources.into_iter() {
+            let destination_with_suffix = increment_name(destination_prefix, counter);
+            self.handle_file(&old, &destination_with_suffix)?;
+            counter += 1
         }
         Ok(())
     }
-}
-
-fn insert_duplicate<'a>(duplicates: &mut Duplicates<'a>, key: PathBuf, value: &'a Path) {
-    assert!(duplicates.entry(key).or_default().insert(value));
-}
-
-fn insert_unique<'a>(
-    filter: &mut BloomFilter,
-    uniques: &mut Uniques<'a>,
-    key: PathBuf,
-    value: &'a Path,
-) {
-    filter.insert(&key);
-    assert!(uniques.insert(key, value).is_none());
 }
 
 fn increment_name(input: &Path, number: u32) -> PathBuf {
