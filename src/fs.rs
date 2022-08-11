@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use glob::{glob_with, MatchOptions};
 use std::path::{Path, PathBuf};
 use xshell::{cmd, Shell};
@@ -20,7 +20,7 @@ pub fn handle_file(
     destination: &Path,
     do_move: bool,
     do_overwrite: bool,
-) -> Result<()> {
+) {
     let command = match (do_move, do_overwrite) {
         // Move, overwrite
         (true, true) => cmd!(sh, "mv {source} {destination}"),
@@ -34,7 +34,13 @@ pub fn handle_file(
         // Copy, preserve
         (false, false) => cmd!(sh, "cp -n {source} {destination}"),
     };
-    command.run().context("Failed to handle file")
+    if let Err(error) = command.run() {
+        println!(
+            "Failed to handle file: {}. Error: {}",
+            source.display(),
+            error
+        )
+    }
 }
 
 pub fn increment_name(input: &Path, number: u32) -> PathBuf {

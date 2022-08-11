@@ -20,7 +20,17 @@ fn main() -> anyhow::Result<()> {
     // parse metadata and group
     println!("Scanning files...");
     for source in input_files.into_iter().progress() {
-        let metadata = Metadata::exiftool(&sh, &source)?;
+        let metadata = match Metadata::exiftool(&sh, &source) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                eprintln!(
+                    "Failed to read metadata from file: {}. Error: {}",
+                    source.display(),
+                    error
+                );
+                continue;
+            }
+        };
         let dest = metadata.new_file_name(&args.destination);
         processed_files.entry(dest).or_default().insert(source);
     }
@@ -30,23 +40,17 @@ fn main() -> anyhow::Result<()> {
     for (destination, sources) in processed_files.into_iter().progress() {
         if sources.len() == 1 {
             let source = sources.into_iter().next().unwrap();
-            handle_file(&sh, &source, &destination, &args)?;
+            handle_file(&sh, &source, &destination, &args);
         } else {
-            handle_duplicates(&sh, &destination, sources, &args)?
+            handle_duplicates(&sh, &destination, sources, &args)
         }
     }
     Ok(())
 }
 
-fn handle_file(
-    sh: &Shell,
-    source: &Path,
-    destination: &Path,
-    args: &cli::Cli,
-) -> anyhow::Result<()> {
+fn handle_file(sh: &Shell, source: &Path, destination: &Path, args: &cli::Cli) {
     if args.dry_run {
         println!("{} -> {}", source.display(), destination.display());
-        Ok(())
     } else {
         fs::handle_file(sh, source, destination, args.do_move, args.overwrite)
     }
@@ -57,14 +61,13 @@ fn handle_duplicates(
     destination_prefix: &Path,
     sources: HashSet<PathBuf>,
     args: &cli::Cli,
-) -> anyhow::Result<()> {
+) {
     let mut counter: u32 = 1;
     for old in sources.into_iter() {
         let destination_with_suffix = fs::increment_name(destination_prefix, counter);
-        handle_file(sh, &old, &destination_with_suffix, args)?;
+        handle_file(sh, &old, &destination_with_suffix, args);
         counter += 1
     }
-    Ok(())
 }
 
 fn annouce_operation(args: &cli::Cli) {
