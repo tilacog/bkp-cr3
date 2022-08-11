@@ -36,3 +36,23 @@ pub fn handle_file(
     };
     command.run().context("Failed to handle file")
 }
+
+pub fn increment_name(input: &Path, number: u32) -> PathBuf {
+    let extension = input.extension().expect("Expected an extension");
+    let base_name = input.with_extension("");
+    let base_name = base_name.to_str().expect("Expected a base name");
+    let new_name = format!("{}-{:0>3}", base_name, number);
+    input.with_file_name(&new_name).with_extension(extension)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_increment_name() {
+        let path = Path::new("/etc/foo/bar.rs");
+        let new = increment_name(path, 1);
+        assert_eq!(new, Path::new("/etc/foo/bar-001.rs"))
+    }
+}
