@@ -4,6 +4,7 @@ mod fs;
 
 use crate::exif::Metadata;
 use clap::Parser as _;
+use indicatif::ProgressIterator;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
@@ -17,14 +18,16 @@ fn main() -> anyhow::Result<()> {
     let mut processed_files: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
 
     // parse metadata and group
-    for source in input_files.into_iter() {
+    println!("Scanning files...");
+    for source in input_files.into_iter().progress() {
         let metadata = Metadata::exiftool(&sh, &source)?;
         let dest = metadata.new_file_name(&args.destination);
         processed_files.entry(dest).or_default().insert(source);
     }
 
     // fan out
-    for (destination, sources) in processed_files.into_iter() {
+    annouce_operation(&args);
+    for (destination, sources) in processed_files.into_iter().progress() {
         if sources.len() == 1 {
             let source = sources.into_iter().next().unwrap();
             handle_file(&sh, &source, &destination, &args)?;
@@ -62,4 +65,15 @@ fn handle_duplicates(
         counter += 1
     }
     Ok(())
+}
+
+fn annouce_operation(args: &cli::Cli) {
+    let message = match (args.dry_run, args.do_move, args.overwrite) {
+        (true, _, _) => "Rename preview",
+        (false, true, false) => "Moving files... [ignore existing]",
+        (false, true, true) => "Moving files... [overwrite]",
+        (false, false, true) => "Copying files... [ignore existing]",
+        (false, false, false) => "Copying files... [overwrite]",
+    };
+    println!("{}", message);
 }
