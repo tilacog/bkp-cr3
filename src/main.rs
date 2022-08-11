@@ -3,14 +3,16 @@ mod exif;
 mod fs;
 
 use crate::exif::Metadata;
-use anyhow::Context as _;
 use bloom::{BloomFilter, ASMS};
 use clap::Parser as _;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
 };
-use xshell::{cmd, Shell};
+use xshell::Shell;
+
+type Duplicates<'a> = HashMap<PathBuf, HashSet<&'a Path>>;
+type Uniques<'a> = HashMap<PathBuf, &'a Path>;
 
 fn main() -> anyhow::Result<()> {
     let args = cli::Cli::parse();
@@ -27,7 +29,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 struct Runner<'a> {
-    filter: BloomFilter,
     sh: xshell::Shell,
     input_files: Vec<PathBuf>,
     destination: &'a Path,
@@ -46,9 +47,7 @@ impl<'a> Runner<'a> {
         do_move: bool,
     ) -> anyhow::Result<Self> {
         let input_files = fs::scan(source)?;
-        let filter = BloomFilter::with_rate(0.01, input_files.len() as u32);
         Ok(Self {
-            filter,
             sh,
             input_files,
             destination,
@@ -57,46 +56,48 @@ impl<'a> Runner<'a> {
             do_move,
         })
     }
-    fn run(&mut self) -> anyhow::Result<()> {
-        let mut duplicates: HashMap<PathBuf, HashSet<&Path>> = HashMap::new();
 
-        for file_name in self.input_files.iter() {
-            let metadata = Metadata::exiftool(&self.sh, &file_name)?;
-            let new_file_name = metadata.new_file_name(self.destination);
-            if self.filter.contains(&new_file_name) {
-                // register duplicate
-                duplicates
-                    .entry(new_file_name)
-                    .or_default()
-                    .insert(file_name);
-            } else {
-                self.handle_file(file_name, &new_file_name)?;
-                self.filter.insert(&new_file_name);
+    fn run(&mut self) -> anyhow::Result<()> {
+        let mut filter = BloomFilter::with_rate(0.01, self.input_files.len() as u32);
+        let mut duplicates: Duplicates = HashMap::new();
+        let mut uniques: Uniques = HashMap::new();
+
+        for source_file_name in self.input_files.iter() {
+            let metadata = Metadata::exiftool(&self.sh, &source_file_name)?;
+            let dest_file_name = metadata.new_file_name(self.destination);
+
+            if filter.contains(&dest_file_name) {
+                // If the filter has seen this name before, then this is probably a duplicate.
+                // We need to:
+                // 1. remove the previous ocurrence from the `uniques` container, if it is there.
+                // 2. if the previous operation succeeded, insert the current file name in the
+                //   `duplicates` container.
+                if let Some(prev_source_file_name) = uniques.remove(&dest_file_name) {
+                    insert_duplicate(&mut duplicates, dest_file_name.clone(), source_file_name);
+                    insert_duplicate(&mut duplicates, dest_file_name, prev_source_file_name);
+                    continue;
+                }
             }
+            insert_unique(&mut filter, &mut uniques, dest_file_name, &source_file_name);
         }
+        self.handle_uniques(uniques)?;
         self.handle_duplicates(duplicates)
     }
 
-    fn handle_file(&self, old: &Path, new: &Path) -> anyhow::Result<()> {
+    fn handle_file(&self, source: &Path, destination: &Path) -> anyhow::Result<()> {
         if self.dry_run {
-            println!("{} -> {}", old.display(), new.display());
-            return Ok(());
+            println!("{} -> {}", source.display(), destination.display());
+            Ok(())
+        } else {
+            fs::handle_file(&self.sh, source, destination, self.do_move, self.overwrite)
         }
-        let command = match (self.do_move, self.overwrite) {
-            // Move, overwrite
-            (true, true) => cmd!(self.sh, "mv {old} {new}"),
+    }
 
-            // Move, preserve
-            (true, false) => cmd!(self.sh, "mv -n {old} {new}"),
-
-            // Copy, overwrite
-            (false, true) => cmd!(self.sh, "cp {old} {new}"),
-
-            // Copy, preserve
-            (false, false) => cmd!(self.sh, "cp -n {old} {new}"),
-        };
-
-        command.run().context("Failed to handle file")
+    fn handle_uniques(&self, uniques: HashMap<PathBuf, &Path>) -> anyhow::Result<()> {
+        for (dest_file_name, source_file_name) in uniques.into_iter() {
+            self.handle_file(source_file_name, &dest_file_name)?;
+        }
+        Ok(())
     }
 
     fn handle_duplicates(
@@ -113,13 +114,27 @@ impl<'a> Runner<'a> {
                 let mut counter: u32 = 1;
                 for old_file_name in old_file_names {
                     let new_file_name_with_suffix = increment_name(&new_file_name, counter);
-                    self.handle_file(&new_file_name_with_suffix, old_file_name)?;
+                    self.handle_file(old_file_name, &new_file_name_with_suffix)?;
                     counter += 1
                 }
             }
         }
         Ok(())
     }
+}
+
+fn insert_duplicate<'a>(duplicates: &mut Duplicates<'a>, key: PathBuf, value: &'a Path) {
+    assert!(duplicates.entry(key).or_default().insert(value));
+}
+
+fn insert_unique<'a>(
+    filter: &mut BloomFilter,
+    uniques: &mut Uniques<'a>,
+    key: PathBuf,
+    value: &'a Path,
+) {
+    filter.insert(&key);
+    assert!(uniques.insert(key, value).is_none());
 }
 
 fn increment_name(input: &Path, number: u32) -> PathBuf {
