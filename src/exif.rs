@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use chrono::NaiveDateTime;
 use xshell::{cmd, Shell};
 
+// TODO: make those two formats configurable
 const INPUT_DATE_FMT: &str = "%Y-%m-%d %H:%M:%S";
-const OUTPUT_DATE_FMT: &str = "%Y-%m-%dT%H:%M:%S";
+const OUTPUT_DATE_FMT: &str = "%Y-%m-%dT%H-%M-%S";
 
 #[derive(Debug)]
 pub struct Metadata {
