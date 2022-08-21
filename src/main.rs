@@ -37,7 +37,10 @@ fn main() -> anyhow::Result<()> {
 
     // fan out
     annouce_operation(&args);
-    for (destination, sources) in processed_files.into_iter().progress() {
+
+    // TODO: provide some verbosity option for displaying either the progress bar, the filenames or
+    // neither.
+    for (destination, sources) in processed_files.into_iter() {
         if sources.len() == 1 {
             let source = sources.into_iter().next().unwrap();
             handle_file(&sh, &source, &destination, &args);
